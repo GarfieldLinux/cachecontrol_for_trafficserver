@@ -26,6 +26,6 @@ dest_domain、suffix是必须的，status默认是200，maxage默认是86400
 
 ###关键代码
 
-#define SUFFIXCOUNT  20   //设置每条配置最多可以匹配多少个文件后缀
-#define PATTERNCOUNT 20   //设置最多可以有多少条配置
+    define SUFFIXCOUNT  20   //设置每条配置最多可以匹配多少个文件后缀
+    define PATTERNCOUNT 20   //设置最多可以有多少条配置
 
