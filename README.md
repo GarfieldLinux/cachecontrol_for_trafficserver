@@ -25,6 +25,8 @@ ats自带的cache.config不适合正向使用，当使用其ttl配置的时候�
 ####说明
 dest_domain、suffix是必须的，status默认是200，maxage默认是86400
 
+由于缓存代理服务器之间会继承age，会导致修改max-age不成功，所以代码中把源返回的header中的date字段删除。
+
 ####另外
 建议配合ats如下选项使用
 
