@@ -5,7 +5,15 @@ ats自带的cache.config不适合正向使用，当使用其ttl配置的时候�
 
 因此我们自己写了个修改max-age的插件。可以通过域名、配合状态码来对缓存进行控制。
 
-####配置方式
+####编译安装
+
+    tsxs -c cache_control.c -o cache_control.so
+    
+复制cache_control.so和cachecontrol.config配置文件到ats的插件目录下
+配置plugin.config添加cache_control.so即可
+
+
+####cachecontrol.config配置方式
 
     @dest_domain=.* @suffix=jpg|gif|png|flv|mp4|f4v|rar|zip|exe|iso|xls|doc|docx|xlsx|pdf @status=200 @maxage=5184000 
     
