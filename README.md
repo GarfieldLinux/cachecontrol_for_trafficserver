@@ -11,7 +11,7 @@ ats自带的cache.config不适合正向使用，当使用其ttl配置的时候�
     
 >    @dest_domain=.* @suffix=.* @status=404 @maxage=120
 
-由于加个@有助于代码处理，所以就这样做了。
+由于加个@有助于代码处理，所以就这样做了。可以用#号进行注释。
 
 ###说明
 dest_domain、suffix是必须的，status默认是200，maxage默认是86400
@@ -22,3 +22,10 @@ dest_domain、suffix是必须的，status默认是200，maxage默认是86400
 > traffic_line -s proxy.config.http.cache.required_headers -v 2
 
 > traffic_line -x
+
+
+###关键代码
+
+#define SUFFIXCOUNT  20   //设置每条配置最多可以匹配多少个文件后缀
+#define PATTERNCOUNT 20   //设置最多可以有多少条配置
+
