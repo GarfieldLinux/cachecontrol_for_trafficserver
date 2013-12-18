@@ -5,7 +5,7 @@ ats自带的cache.config不适合正向使用，当使用其ttl配置的时候�
 
 因此我们自己写了个修改max-age的插件。可以通过域名、配合状态码来对缓存进行控制。
 
-###配置方式
+####配置方式
 
     @dest_domain=.* @suffix=jpg|gif|png|flv|mp4|f4v|rar|zip|exe|iso|xls|doc|docx|xlsx|pdf @status=200 @maxage=5184000 
     
@@ -13,10 +13,10 @@ ats自带的cache.config不适合正向使用，当使用其ttl配置的时候�
 
 由于加个@有助于代码处理，所以就这样做了。可以用#号进行注释。
 
-###说明
+####说明
 dest_domain、suffix是必须的，status默认是200，maxage默认是86400
 
-###另外
+####另外
 建议配合ats如下选项使用
 
     traffic_line -s proxy.config.http.cache.required_headers -v 2
@@ -24,7 +24,7 @@ dest_domain、suffix是必须的，status默认是200，maxage默认是86400
     traffic_line -x
 
 
-###关键代码
+####关键代码
 
     define SUFFIXCOUNT  20   //设置每条配置最多可以匹配多少个文件后缀
     define PATTERNCOUNT 20   //设置最多可以有多少条配置
