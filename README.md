@@ -32,8 +32,11 @@ dest_domain、suffix是必须的，status默认是200，maxage默认是86400
 
     traffic_line -x
 
+####注意
 
-####关键代码
+cache.config的配置会覆盖此插件功能，如果使用此插件建议就不用使用cache.config了，除非你已经很清楚它们之间的影响关系。
+
+####关键代码说明
 
     define SUFFIXCOUNT  20   //设置每条配置最多可以匹配多少个文件后缀
     define PATTERNCOUNT 20   //设置最多可以有多少条配置
