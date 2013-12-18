@@ -10,6 +10,7 @@ ats自带的cache.config不适合正向使用，当使用其ttl配置的时候�
     tsxs -c cache_control.c -o cache_control.so
     
 复制cache_control.so和cachecontrol.config配置文件到ats的插件目录下
+
 配置plugin.config添加cache_control.so即可
 
 
