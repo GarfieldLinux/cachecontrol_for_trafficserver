@@ -31,12 +31,15 @@ dest_domain、suffix是必须的，status默认是200，maxage默认是86400
 建议配合ats如下选项使用
 
     traffic_line -s proxy.config.http.cache.required_headers -v 2
+    traffic_line -s proxy.config.http.cache.heuristic_max_lifetime -v 17280000
 
     traffic_line -x
 
 ####注意
 
 cache.config的配置会覆盖此插件功能，如果使用此插件建议就不用使用cache.config了，除非你已经很清楚它们之间的影响关系。
+proxy.config.http.cache.heuristic_max_lifetime上面这项的值要设置得不比你设置的maxage小。
+
 
 ####关键代码说明
 
