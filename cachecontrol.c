@@ -2,52 +2,17 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-
-
 #include "ts/ts.h"
-#include "ts/remap.h"
-#include "/root/MyFile/ats_source/trafficserver-4.0.2/lib/ts/ink_defs.h"
-#include "/root/MyFile/ats_source/trafficserver-4.0.2/lib/ts/ink_config.h"
-
-//#include "/root/soft/trafficserver-4.0.2/lib/ts/ink_config.h"
-//#include "/root/soft/trafficserver-4.0.2/lib/ts/ink_defs.h"
+#include "common.h"
+#include "ats_common.h"
 
 #define PLUGIN_NAME "longcache"
-
-#define MAXSIZE      1024
-#define SUFFIXCOUNT  100
-#define SUFFIXARGLEN 50
-#define PATTERNCOUNT 100
-typedef struct { 
-    char          dest_domain[MAXSIZE];
-    char          suffix[SUFFIXCOUNT][SUFFIXARGLEN]; 
-	int           suffixcount;
-	int           status;
-    unsigned int  maxage;    
-} pattern_info;
-
-typedef struct {
-    pattern_info pr_info[PATTERNCOUNT];
-    int          patterncount; 
-} pr_list;
-
-void StrTrim(char *pStr)   
-{   
-    char *pTmpLeft = pStr;   
-  
-    while (*pTmpLeft == ' ')    
-    {   
-        pTmpLeft++;   
-    }
-    while(*pTmpLeft != '\0' && *pTmpLeft != ' ')
-    {   
-        *pStr = *pTmpLeft;   
-        pStr++;   
-        pTmpLeft++;
-    }
-
-    *pStr = '\0';
-}
+static Conf_Cache_Controls  cache_controls;
+static int get_value(char *begin,char *value);
+static int load_config_file(const char *config_file);
+static void insert_cache_controls(int cur_count,char *dest_domain,int status,unsigned int maxage,char * suffix);
+static void copy_cache_controls(Conf_Cache_Control *item_old,int capacity_old,Conf_Cache_Control *item_new,int capacity_new);
+static void insert_item(Conf_Cache_Control *item,int capacity,char *dest_domain,int status,unsigned int maxage,char * suffix);
 
 static int get_value(char *begin,char *value)
 {
@@ -64,12 +29,76 @@ static int get_value(char *begin,char *value)
    }
    return 0;
 }
-static pr_list* load_config_file(const char *config_file) {
-    char buffer[MAXSIZE];
+static void copy_cache_controls(Conf_Cache_Control *item_old,int capacity_old,Conf_Cache_Control *item_new,int capacity_new)
+{
+	Conf_Cache_Control item_temp;
+	int i;
+	for(i=0;i < capacity_old;i++)
+	{
+		item_temp = item_old[i];
+		if(item_temp.flags == 1)
+			insert_item(item_new,capacity_new,item_temp.dest_domain,item_temp.status,item_temp.maxage,item_temp.suffix);
+	}
+}
+
+static void insert_item(Conf_Cache_Control *item,int capacity,char *dest_domain,int status,unsigned int maxage,char * suffix)
+{
+	int hash_val,new_hash_val;
+	Conf_Cache_Control item_cache_control;
+	char suffix_temp[20]={0};
+	if(suffix[0] != '.')
+		sprintf(suffix_temp,".%s",suffix);
+	else
+		strcpy(suffix_temp,suffix);
+	hash_val = hash(suffix_temp)%capacity;
+	item_cache_control = item[hash_val];
+	while(item_cache_control.flags == 1 && item_cache_control.next != NULL){
+		item_cache_control = *(item_cache_control.next);
+		hash_val = item_cache_control.hash_val;
+	}
+	new_hash_val = hash_val;
+	while(item[new_hash_val].flags == 1){
+		new_hash_val = (new_hash_val + 1)%capacity;
+	}
+	memset(item[new_hash_val].suffix,'\0',sizeof(item[new_hash_val].suffix));
+	strcpy(item[new_hash_val].suffix,suffix_temp);
+	memset(item[new_hash_val].dest_domain,'\0',sizeof(item[new_hash_val].dest_domain));
+	strcpy(item[new_hash_val].dest_domain,dest_domain);
+	item[new_hash_val].flags = 1;
+	item[new_hash_val].status = status;
+	item[new_hash_val].maxage = maxage;
+	item[new_hash_val].next = NULL;
+	item[new_hash_val].hash_val = new_hash_val;
+	//TSDebug(PLUGIN_NAME, "suffix:%s,hash_val:%d",item[new_hash_val].suffix,new_hash_val);
+	if(new_hash_val != hash_val){
+		item[hash_val].next = &item[new_hash_val];
+		//TSDebug(PLUGIN_NAME, "cur_suffix:%s,curl_hash_val:%d,pre_suffix:%s,pre_hash_val:%d",
+		//	item[hash_val].next->suffix,item[hash_val].next->hash_val,item[hash_val].suffix,item[hash_val].hash_val);
+	}
+}
+static void insert_cache_controls(int cur_count,char *dest_domain,int status,unsigned int maxage,char * suffix)
+{
+	Conf_Cache_Control *item;
+	int capacity;
+	if(cur_count >= (cache_controls.capacity/2))
+	{
+		TSDebug(PLUGIN_NAME, "cache_controls.capacity:%d",cache_controls.capacity);
+		capacity = next_prime(cache_controls.capacity + 1);
+		item = calloc(capacity,sizeof(Conf_Cache_Control));
+		if(cache_controls.item && cache_controls.capacity > 0){
+			copy_cache_controls(cache_controls.item,cache_controls.capacity,item,capacity);
+			TSDebug(PLUGIN_NAME, "free free");
+			free(cache_controls.item);
+		}
+		cache_controls.capacity = capacity;
+		cache_controls.item = item;
+	}
+	insert_item(cache_controls.item,cache_controls.capacity,dest_domain,status,maxage,suffix);
+	
+}
+static int load_config_file(const char *config_file) {
     char default_config_file[MAXSIZE];
 	TSFile fh;
-    pr_list *prl = TSmalloc(sizeof(pr_list));
-    prl->patterncount = 0;
 
 	if (!config_file) {
 	    memset(default_config_file,'\0',sizeof(default_config_file));
@@ -82,64 +111,30 @@ static pr_list* load_config_file(const char *config_file) {
     if (!fh) {
         goto error;
     }
-	char *p,*temp1,*temp2;
+	
+	char *p,*temp1;
 	char value[MAXSIZE];
+	char buffer[MAXSIZE];
+	char dest_domain[MAXSIZE];
+	char valueTemp[20];
 	unsigned int  k;
+	int status;
+	unsigned int maxage;
+	int cur_count = 0;
 	memset(buffer,'\0',sizeof(buffer));
-
 	while (TSfgets(fh, buffer, sizeof(buffer) - 1)) {
 	    if(buffer[0] == '#')
 		{
 		  memset(buffer,'\0',sizeof(buffer));
 		  continue;
 		}
-	    TSDebug(PLUGIN_NAME, "%s",buffer);
+	    //TSDebug(PLUGIN_NAME, "%s",buffer);
 	    p = strstr(buffer,"@dest_domain");
 		if(p){
 		   memset(value,'\0',sizeof(value));
 		   if(get_value(p,value)){
-		      memset(prl->pr_info[prl->patterncount].dest_domain,'\0',sizeof(prl->pr_info[prl->patterncount].dest_domain));
-		      if(strcmp(value,".*") == 0)
-			    prl->pr_info[prl->patterncount].dest_domain[0] = '0';
-			  else
-			    strcpy(prl->pr_info[prl->patterncount].dest_domain,value);
-		   }else{
-		      goto error;
-		   }
-		}else{
-		   goto error;
-		}
-		
-		p = strstr(buffer,"@suffix");
-		if(p){
-		   memset(value,'\0',sizeof(value));
-		   if(get_value(p,value)){
-		      if(strcmp(value,".*") == 0){
-			      prl->pr_info[prl->patterncount].suffixcount = 1;
-				  memset(prl->pr_info[prl->patterncount].suffix[0],'\0',sizeof(prl->pr_info[prl->patterncount].suffix[0]));
-				  prl->pr_info[prl->patterncount].suffix[0][0] = '0';
-			  }else{
-				  k = 0;
-				  prl->pr_info[prl->patterncount].suffixcount = 0;
-				  temp1 = value;
-				  temp2 = strstr(temp1,"|");
-				  
-				  while(temp2)
-				  {
-					 memset(prl->pr_info[prl->patterncount].suffix[k],'\0',sizeof(prl->pr_info[prl->patterncount].suffix[k]));
-					 strcpy(prl->pr_info[prl->patterncount].suffix[k],".");
-					 strncat(prl->pr_info[prl->patterncount].suffix[k],temp1,temp2 - temp1);
-					 temp1 = temp2 + 1;
-					 temp2 = strstr(temp1,"|");
-					 k++;
-				  }
-				  memset(prl->pr_info[prl->patterncount].suffix[k],'\0',sizeof(prl->pr_info[prl->patterncount].suffix[k]));
-				  strcpy(prl->pr_info[prl->patterncount].suffix[k],".");
-				  strcat(prl->pr_info[prl->patterncount].suffix[k],temp1);
-				  prl->pr_info[prl->patterncount].suffixcount = ++k;
-				  if(prl->pr_info[k].suffixcount > SUFFIXCOUNT)
-					 goto error;
-			  }
+			   memset(dest_domain,'\0',sizeof(dest_domain));
+			   strcpy(dest_domain,value);
 		   }else{
 		      goto error;
 		   }
@@ -151,17 +146,16 @@ static pr_list* load_config_file(const char *config_file) {
 		if(p){
 		   memset(value,'\0',sizeof(value));
 		   if(get_value(p,value)){
-		      
 		      k = atoi(value);
 			  if(k)
-			    prl->pr_info[prl->patterncount].status = k;
+			    status = k;
 			  else
 			    goto error;
 		   }else{
 		      goto error;
 		   }
 		}else{
-		   prl->pr_info[prl->patterncount].status = 200;
+		   status = 200;
 		}
 		
 		p = strstr(buffer,"@maxage");
@@ -170,10 +164,10 @@ static pr_list* load_config_file(const char *config_file) {
 		   if(get_value(p,value)){
 		      k = atoi(value);
 			  if(k){
-			    prl->pr_info[prl->patterncount].maxage = k;
+			    maxage = k;
 			  }else{
 			    if(strncmp(value,"0",1) == 0){
-				   prl->pr_info[prl->patterncount].maxage = 0;
+				   maxage = 0;
 				}else{
 				   goto error;
 				}
@@ -182,133 +176,109 @@ static pr_list* load_config_file(const char *config_file) {
 		      goto error;
 		   }
 		}else{
-		   prl->pr_info[prl->patterncount].maxage = 86400;
+		   maxage = 86400;
 		}
-		prl->patterncount++;
+		
+		p = strstr(buffer,"@suffix");
+		if(p){
+		   memset(value,'\0',sizeof(value));
+		   if(get_value(p,value)){
+				temp1 = value;
+				p = strstr(temp1,"|");
+				while(p){
+					memset(valueTemp,'\0',sizeof(valueTemp));
+					strncpy(valueTemp,temp1,p - temp1);
+					if(strlen(valueTemp) > 0){
+						insert_cache_controls(cur_count,dest_domain,status, maxage,valueTemp);
+						cur_count++;
+					}
+					temp1 = p + 1;
+					if(temp1)
+						p = strstr(temp1,"|");
+					else
+						p = temp1;
+				}
+				if(temp1 && strlen(temp1) > 0){
+					insert_cache_controls(cur_count,dest_domain,status, maxage,temp1);
+					cur_count++;
+				}
+		   }else{
+		      goto error;
+		   }
+		}else{
+		   goto error;
+		}
         memset(buffer,'\0',sizeof(buffer));
     }
     TSfclose(fh);
-	
-	if(prl->patterncount <= PATTERNCOUNT){
-	  TSDebug(PLUGIN_NAME, "Load Config Success!");
-	  return prl;
+	Conf_Cache_Control item;
+	int j;
+	for(j = 0; j < cache_controls.capacity; j++)
+	{
+		item = cache_controls.item[j];
+		if(item.flags == 1)
+			TSDebug(PLUGIN_NAME,"suffix:%s,hash_val:%d,dest_domain:%s,maxage:%d,status:%d,flags:%d",
+				item.suffix,item.hash_val,item.dest_domain,item.maxage,item.status,item.flags);
 	}
+	TSDebug(PLUGIN_NAME,"Load Config Success!");
+	return 1;
 error:
-    return NULL;
+	if (fh) {
+        TSfclose(fh);
+    }
+    return 0;
 }
 static void
 modify_header(TSCont contp,TSHttpTxn txnp)
 {
-    TSHttpStatus resp_status;
-	TSMBuffer resp_bufp;
-    TSMLoc resp_loc;
-	
-	TSMBuffer req_bufp;
-    TSMLoc req_loc;
-	
-	TSMLoc field_loc;
-    char *EffectiveUrl=0;
-	const char *dest_domain=0;
-	char *p;
-	//char *temp;
+	char *url;
+    int  url_length;
+	char *url_host;
+	int  hash_val;
+	char filename[10];
 	char maxage[256];
-    int Length;
-	int k=0;
-	int j;
-	int frags=0;
-	pattern_info *patn;
-	pr_list *prl;
-    prl = (pr_list *)TSContDataGet(contp);
-	
-	if (TSHttpTxnClientReqGet(txnp, &req_bufp, &req_loc) != TS_SUCCESS) {
-		
+	TSHttpStatus resp_status;
+	url = TSHttpTxnEffectiveUrlStringGet(txnp, &url_length);
+	if(!url)
 		return;
-	 }
-	 
-	field_loc = TSMimeHdrFieldFind(req_bufp, req_loc, TS_MIME_FIELD_HOST, TS_MIME_LEN_HOST);
-	if(field_loc != TS_NULL_MLOC){
-	    dest_domain = TSMimeHdrFieldValueStringGet(req_bufp,req_loc,field_loc,0,&Length);
-		TSHandleMLocRelease(req_bufp, req_loc, field_loc);
-		TSHandleMLocRelease(req_bufp, TS_NULL_MLOC, req_loc);
-	}else{
-		return;    
-    }
-	
-	if (TSHttpTxnServerRespGet(txnp, &resp_bufp, &resp_loc) != TS_SUCCESS) {
-        return;                  
-    }
-
-	EffectiveUrl = TSHttpTxnEffectiveUrlStringGet(txnp, &Length);
-	if(!EffectiveUrl)
-	  goto done;
-	
-	resp_status = TSHttpHdrStatusGet(resp_bufp, resp_loc);
-
-	while(k < prl->patterncount)
-	{
-	   frags = 0;
-	   patn = &prl->pr_info[k];
-	   if(resp_status == patn->status)
-	   {
-		   
-	       if(patn->dest_domain[0] == '0' || strncmp(dest_domain,patn->dest_domain,strlen(patn->dest_domain)) == 0){
-		      frags = 1;
-		   }else{
-		      k++;
-		      continue;
-		   }
-		   j = 0;
-		   while(frags && j < patn->suffixcount)
-		   {
-		      p = strstr(EffectiveUrl,patn->suffix[j]);
-			  
-			  if(p || (patn->suffixcount == 1 && patn->suffix[0][0] == '0')){
-			    memset(maxage,'\0',sizeof(maxage));
-				sprintf(maxage,"max-age=%d",patn->maxage);				
-			    goto addfield;
-			  }
-			  j++;
-		   }
-		   
-	   }
-	   k++;
+	url_host = GetUrlHost(url);
+	resp_status = StaServerRespStatusGet(txnp);
+	memset(filename,'\0',sizeof(filename));
+	GetUrlType(url,url_length,filename);
+	if(strlen(filename) <= 0){
+		memset(filename,'\0',sizeof(filename));
+		strcpy(filename,".*");
 	}
+	
+	hash_val = hash(filename)%cache_controls.capacity;
+	Conf_Cache_Control item = cache_controls.item[hash_val];
+	//TSDebug(PLUGIN_NAME,"filename:%s,hash_val:%d",filename,hash_val);
+	while(item.flags == 1){
+		if(!strcmp(item.suffix,filename) && resp_status == item.status && 
+			(!strcmp(url_host,item.dest_domain) || !strcmp(".*",item.dest_domain))){
+			memset(maxage,'\0',sizeof(maxage));
+			sprintf(maxage,"max-age=%d",item.maxage);
+			//TSDebug(PLUGIN_NAME,"maxage:%s,filename:%s",maxage,filename);
+			goto addfield;
+		}
+		if(item.next){
+			item = *(item.next);
+			//TSDebug(PLUGIN_NAME,"suffix:%s,hash_val:%d,status:%d",item.suffix,item.hash_val,item.status);
+		}
+		else
+			break;
+	}
+	if(TS_HTTP_STATUS_OK != resp_status)
+		TSHttpTxnServerRespNoStoreSet(txnp,1);
 	goto done;
 addfield:
-	field_loc = TSMimeHdrFieldFind(resp_bufp, resp_loc, TS_MIME_FIELD_DATE, TS_MIME_LEN_DATE);
-	if(field_loc != TS_NULL_MLOC){
-	    TSMimeHdrFieldDestroy(resp_bufp,resp_loc,field_loc);
-	    TSHandleMLocRelease(resp_bufp, resp_loc, field_loc);
-	}
-	
-	field_loc = TSMimeHdrFieldFind(resp_bufp, resp_loc, TS_MIME_FIELD_AGE, TS_MIME_LEN_AGE);
-	if(field_loc != TS_NULL_MLOC){
-	    TSMimeHdrFieldDestroy(resp_bufp,resp_loc,field_loc);
-	    TSHandleMLocRelease(resp_bufp, resp_loc, field_loc);
-	}
-	
-	field_loc = TSMimeHdrFieldFind(resp_bufp, resp_loc, TS_MIME_FIELD_CACHE_CONTROL, TS_MIME_LEN_CACHE_CONTROL);
-	if(field_loc != TS_NULL_MLOC){
-	    TSMimeHdrFieldValuesClear(resp_bufp, resp_loc, field_loc);
-	    TSMimeHdrFieldValueStringInsert(resp_bufp, resp_loc, field_loc, -1, maxage, strlen(maxage));
-	    TSHandleMLocRelease(resp_bufp, resp_loc, field_loc);
-	}else{
-		if(TSMimeHdrFieldCreate(resp_bufp, resp_loc, &field_loc) == TS_SUCCESS) {
-			TSMimeHdrFieldAppend(resp_bufp, resp_loc, field_loc);
-			TSMimeHdrFieldValuesClear(resp_bufp, resp_loc, field_loc);
-			TSMimeHdrFieldNameSet(resp_bufp, resp_loc, field_loc, TS_MIME_FIELD_CACHE_CONTROL, TS_MIME_LEN_CACHE_CONTROL);
-			TSMimeHdrFieldValueStringInsert(resp_bufp, resp_loc, field_loc, -1, maxage, strlen(maxage));
-			TSHandleMLocRelease(resp_bufp, resp_loc, field_loc);
-		}
-	}
+	StaSerRespMimeHdrFieldDestroy(txnp,(char *)TS_MIME_FIELD_DATE, TS_MIME_LEN_DATE);
+	StaSerRespMimeHdrFieldDestroy(txnp,(char *)TS_MIME_FIELD_AGE, TS_MIME_LEN_AGE);
+	StaSerRespMimeHdrFieldAppend(txnp,(char *)TS_MIME_FIELD_CACHE_CONTROL, TS_MIME_LEN_CACHE_CONTROL,maxage,strlen(maxage));
 done:
-    if(EffectiveUrl) 
-	{
-	   TSfree(EffectiveUrl);
+	if(url){
+		TSfree(url);
 	}
-	
-	TSHandleMLocRelease(resp_bufp, TS_NULL_MLOC, resp_loc);	
-    		
 }
 
 
@@ -329,24 +299,21 @@ cache_control_plugin(TSCont contp , TSEvent event, void *edata)
 
 void TSPluginInit (int argc, const char *argv[])
 {
+  /*
   TSPluginRegistrationInfo info;
-  pr_list *prl;
   
-  info.plugin_name = "stateam";
-  info.vendor_name = "stateamcache";
-  info.support_email = "stateamcache@MyCompany.com";
+  info.plugin_name = (char*)"stateam";
+  info.vendor_name = (char*)"stateam";
+  info.support_email = (char*)"stateam@MyCompany.com";
 
   if (TSPluginRegister(TS_SDK_VERSION_3_0, &info) != TS_SUCCESS) {
-     TSError("Plugin registration failed. \n");
      return;
-  }
-  if(!(prl=load_config_file(NULL)))
+  }*/
+  if(!load_config_file(NULL))
   {
      TSError("Plugin load_config_file failed. \n");
      return;
   }
   TSCont cont = TSContCreate(cache_control_plugin, NULL);
-  TSContDataSet(cont, prl);
-  
   TSHttpHookAdd(TS_HTTP_READ_RESPONSE_HDR_HOOK, cont);
 }
