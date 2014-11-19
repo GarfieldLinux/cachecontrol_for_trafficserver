@@ -15,7 +15,8 @@ ats自带的cache.config不适合正向使用，当使用其ttl配置的时候�
 
     tsxs -c cachecontrol.c -o cachecontrol.so
 
-或直接
+或直接make编译
+
     make
 
 复制cachecontrol.so配置文件到ats的插件目录下    
