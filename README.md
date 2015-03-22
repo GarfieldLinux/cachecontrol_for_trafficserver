@@ -1,4 +1,6 @@
-[stateam团队站点](http://www.stateam.net) - [www.stateam.net](http://www.stateam.net)
+开发团队：[stateam团队站点](http://www.stateam.net) - [www.stateam.net](http://www.stateam.net)    
+
+公司介绍：广州可道技术
 ----    
 
 2014-10-10 重构优化了算法，效率有比较大提升。     
